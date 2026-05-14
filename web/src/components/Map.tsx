@@ -3,9 +3,7 @@ import { Map as MapGL, Source, Layer, type LayerProps } from 'react-map-gl/mapli
 import { layers as protomapsLayers, namedFlavor } from '@protomaps/basemaps';
 import type { LocationRow } from '../types';
 
-const PMTILES_URL =
-  import.meta.env.VITE_PMTILES_URL ??
-  'https://demo-bucket.protomaps.com/v4.pmtiles';
+const PMTILES_URL = '/tiles/map.pmtiles';
 
 const flavor = namedFlavor('light');
 

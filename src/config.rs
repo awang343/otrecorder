@@ -48,6 +48,13 @@ pub struct HttpConfig {
     pub bind: String,
     #[serde(default)]
     pub cors_any_origin: bool,
+    /// If set, serve this .pmtiles file at `GET /tiles/map.pmtiles` with HTTP range support.
+    #[serde(default)]
+    pub tiles_pmtiles: Option<PathBuf>,
+    /// If set, serve the built frontend (a Vite `dist/` directory) at `/`.
+    /// Unknown paths fall back to `index.html` for SPA routing.
+    #[serde(default)]
+    pub static_root: Option<PathBuf>,
 }
 
 /// Wrapper that defaults to `true` (serde Default trait gives `false` for bool).
@@ -93,6 +100,8 @@ impl Default for HttpConfig {
             enabled: BoolDefaultTrue::default(),
             bind: default_http_bind(),
             cors_any_origin: false,
+            tiles_pmtiles: None,
+            static_root: None,
         }
     }
 }
@@ -152,6 +161,11 @@ tls      = false
 enabled = true
 bind    = "127.0.0.1:8080"
 cors_any_origin = false
+# Optional: serve a self-hosted Protomaps basemap from this binary.
+# When set, `GET /tiles/map.pmtiles` streams the file with HTTP range support.
+# tiles_pmtiles = "~/.local/share/otrecorder/map.pmtiles"
+# Optional: serve the built web UI (a Vite `dist/` directory) at `/`.
+# static_root = "~/projects/otrecorder/web/dist"
 "#;
 
 pub fn load(path: &Path) -> Result<Config> {

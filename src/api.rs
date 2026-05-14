@@ -7,8 +7,13 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Deserializer, Serialize};
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::error;
+use std::path::PathBuf;
+use tower_http::{
+    cors::CorsLayer,
+    services::{ServeDir, ServeFile},
+    trace::TraceLayer,
+};
+use tracing::{error, info, warn};
 
 use crate::storage::{Bbox, LocationFilter, LocationRow, Storage};
 
@@ -17,7 +22,12 @@ pub struct AppState {
     pub storage: Storage,
 }
 
-pub fn router(state: AppState, cors_any: bool) -> Router {
+pub fn router(
+    state: AppState,
+    cors_any: bool,
+    tiles_pmtiles: Option<PathBuf>,
+    static_root: Option<PathBuf>,
+) -> Router {
     let mut router = Router::new()
         .route("/api/health", get(health))
         .route("/api/stats", get(stats))
@@ -31,6 +41,26 @@ pub fn router(state: AppState, cors_any: bool) -> Router {
         .route("/api/track.geojson", get(track_geojson))
         .route("/api/track.gpx", get(track_gpx))
         .with_state(state);
+
+    if let Some(path) = tiles_pmtiles {
+        if path.is_file() {
+            info!(path = %path.display(), "serving pmtiles at /tiles/map.pmtiles");
+            router = router.route_service("/tiles/map.pmtiles", ServeFile::new(path));
+        } else {
+            warn!(path = %path.display(), "tiles_pmtiles is set but file does not exist");
+        }
+    }
+
+    if let Some(dir) = static_root {
+        if dir.is_dir() {
+            let index = dir.join("index.html");
+            info!(path = %dir.display(), "serving frontend from {}", dir.display());
+            let serve_dir = ServeDir::new(&dir).fallback(ServeFile::new(index));
+            router = router.fallback_service(serve_dir);
+        } else {
+            warn!(path = %dir.display(), "static_root is set but directory does not exist");
+        }
+    }
 
     if cors_any {
         router = router.layer(CorsLayer::permissive());

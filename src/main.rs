@@ -163,8 +163,18 @@ async fn run(cfg: config::Config) -> Result<()> {
         let storage_for_http = storage.clone();
         let bind = cfg.http.bind.clone();
         let cors = cfg.http.cors_any_origin;
+        let tiles = cfg
+            .http
+            .tiles_pmtiles
+            .clone()
+            .map(|p| config::expand_path(&p));
+        let static_root = cfg
+            .http
+            .static_root
+            .clone()
+            .map(|p| config::expand_path(&p));
         Some(tokio::spawn(async move {
-            serve_http(storage_for_http, &bind, cors, http_shutdown_rx).await
+            serve_http(storage_for_http, &bind, cors, tiles, static_root, http_shutdown_rx).await
         }))
     } else {
         info!("http disabled in config; skipping api");
@@ -195,9 +205,16 @@ async fn serve_http(
     storage: storage::Storage,
     bind: &str,
     cors_any_origin: bool,
+    tiles_pmtiles: Option<PathBuf>,
+    static_root: Option<PathBuf>,
     shutdown: oneshot::Receiver<()>,
 ) -> Result<()> {
-    let app = api::router(api::AppState { storage }, cors_any_origin);
+    let app = api::router(
+        api::AppState { storage },
+        cors_any_origin,
+        tiles_pmtiles,
+        static_root,
+    );
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .with_context(|| format!("bind {bind}"))?;
