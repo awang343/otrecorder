@@ -1,6 +1,7 @@
 mod api;
 mod config;
 mod export;
+mod import;
 mod mqtt;
 mod owntracks;
 mod storage;
@@ -33,8 +34,23 @@ enum Cmd {
     Run,
     /// Export locations to Parquet.
     Export(ExportArgs),
+    /// Import an OwnTracks recorder `store/rec` tree (one-shot backfill).
+    Import(ImportArgs),
     /// Print the loaded config (after merging with the file at --config).
     ConfigShow,
+}
+
+#[derive(clap::Args, Debug)]
+struct ImportArgs {
+    /// Path to the recorder's `store/rec` directory.
+    #[arg(long)]
+    root: PathBuf,
+    /// Only import this user (directory name under `root`).
+    #[arg(long)]
+    user: Option<String>,
+    /// Only import this device (directory name under `root/<user>`).
+    #[arg(long)]
+    device: Option<String>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -88,11 +104,33 @@ async fn main() -> Result<()> {
     match cli.cmd.unwrap_or(Cmd::Run) {
         Cmd::Run => run(cfg).await,
         Cmd::Export(args) => run_export(cfg, args),
+        Cmd::Import(args) => run_import(cfg, args),
         Cmd::ConfigShow => {
             println!("{:#?}", cfg);
             Ok(())
         }
     }
+}
+
+fn run_import(cfg: config::Config, args: ImportArgs) -> Result<()> {
+    let root = config::expand_path(&args.root);
+    let storage = storage::Storage::open(&cfg.storage.db_path)?;
+    let stats = import::import_rec_tree(
+        &storage,
+        &root,
+        args.user.as_deref(),
+        args.device.as_deref(),
+    )?;
+    println!(
+        "imported {} file(s), {} line(s): {} locations inserted, {} duplicates, {} other messages, {} skipped",
+        stats.files,
+        stats.lines,
+        stats.locations_inserted,
+        stats.locations_duplicate,
+        stats.messages_inserted,
+        stats.skipped,
+    );
+    Ok(())
 }
 
 async fn run(cfg: config::Config) -> Result<()> {
