@@ -9,9 +9,16 @@ import type {
 import type { LocationRow } from '../types';
 import { useTileFiles } from '../api';
 
+export type ViewMode = 'path' | 'heatmap' | 'stops';
+
 const flavor = namedFlavor('light');
 const ATTRIBUTION =
   '<a href="https://protomaps.com">Protomaps</a> &copy; <a href="https://openstreetmap.org">OpenStreetMap</a>';
+
+const GAP_TIME_S = 15 * 60;
+const GAP_DIST_M = 500;
+const STOP_RADIUS_M = 100;
+const STOP_MIN_DWELL_S = 10 * 60;
 
 function sourceIdFor(file: string, index: number): string {
   const cleaned = file.replace(/\.pmtiles$/i, '').replace(/[^a-zA-Z0-9_]/g, '_');
@@ -56,11 +63,179 @@ function buildMapStyle(files: string[]): StyleSpecification {
   };
 }
 
-const trackLineLayer: LayerProps = {
-  id: 'track-line',
+// ---------- track analysis ----------
+
+function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6_371_000;
+  const toRad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * toRad;
+  const dLon = (lon2 - lon1) * toRad;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+type Segment = {
+  coords: [number, number][];
+  startTst: number;
+  endTst: number;
+};
+
+function segmentTrack(locations: LocationRow[]): Segment[] {
+  const out: Segment[] = [];
+  let cur: LocationRow[] = [];
+  const flush = () => {
+    if (cur.length >= 2) {
+      out.push({
+        coords: cur.map((r) => [r.lon, r.lat] as [number, number]),
+        startTst: cur[0].tst,
+        endTst: cur[cur.length - 1].tst,
+      });
+    }
+    cur = [];
+  };
+  for (const p of locations) {
+    if (cur.length > 0) {
+      const prev = cur[cur.length - 1];
+      if (
+        p.tst - prev.tst > GAP_TIME_S ||
+        haversineMeters(prev.lat, prev.lon, p.lat, p.lon) > GAP_DIST_M
+      ) {
+        flush();
+      }
+    }
+    cur.push(p);
+  }
+  flush();
+  return out;
+}
+
+type Stop = {
+  lon: number;
+  lat: number;
+  startTst: number;
+  endTst: number;
+  count: number;
+};
+
+function detectStops(locations: LocationRow[]): Stop[] {
+  const out: Stop[] = [];
+  let cluster: LocationRow[] = [];
+  let anchorLat = 0;
+  let anchorLon = 0;
+  const flush = () => {
+    if (cluster.length < 2) return;
+    const dur = cluster[cluster.length - 1].tst - cluster[0].tst;
+    if (dur < STOP_MIN_DWELL_S) return;
+    let lat = 0;
+    let lon = 0;
+    for (const p of cluster) {
+      lat += p.lat;
+      lon += p.lon;
+    }
+    out.push({
+      lat: lat / cluster.length,
+      lon: lon / cluster.length,
+      startTst: cluster[0].tst,
+      endTst: cluster[cluster.length - 1].tst,
+      count: cluster.length,
+    });
+  };
+  for (const p of locations) {
+    if (cluster.length === 0) {
+      cluster = [p];
+      anchorLat = p.lat;
+      anchorLon = p.lon;
+      continue;
+    }
+    if (haversineMeters(anchorLat, anchorLon, p.lat, p.lon) <= STOP_RADIUS_M) {
+      cluster.push(p);
+    } else {
+      flush();
+      cluster = [p];
+      anchorLat = p.lat;
+      anchorLon = p.lon;
+    }
+  }
+  flush();
+  return out;
+}
+
+function buildTrips(locations: LocationRow[], stops: Stop[]): Segment[] {
+  if (locations.length === 0) return [];
+  const inStop = new Array<boolean>(locations.length).fill(false);
+  let si = 0;
+  for (let i = 0; i < locations.length; i++) {
+    const t = locations[i].tst;
+    while (si < stops.length && t > stops[si].endTst) si++;
+    if (si < stops.length && t >= stops[si].startTst && t <= stops[si].endTst) {
+      inStop[i] = true;
+    }
+  }
+  const trips: Segment[] = [];
+  let cur: LocationRow[] = [];
+  const flush = () => {
+    if (cur.length >= 2) {
+      trips.push({
+        coords: cur.map((r) => [r.lon, r.lat] as [number, number]),
+        startTst: cur[0].tst,
+        endTst: cur[cur.length - 1].tst,
+      });
+    }
+    cur = [];
+  };
+  for (let i = 0; i < locations.length; i++) {
+    if (inStop[i]) {
+      flush();
+      continue;
+    }
+    const p = locations[i];
+    if (cur.length > 0) {
+      const prev = cur[cur.length - 1];
+      if (
+        p.tst - prev.tst > GAP_TIME_S ||
+        haversineMeters(prev.lat, prev.lon, p.lat, p.lon) > GAP_DIST_M
+      ) {
+        flush();
+      }
+    }
+    cur.push(p);
+  }
+  flush();
+  return trips;
+}
+
+// ---------- layer specs ----------
+
+const timeColorExpr = [
+  'interpolate',
+  ['linear'],
+  ['get', 't'],
+  0.0,
+  '#2563eb',
+  0.5,
+  '#a855f7',
+  1.0,
+  '#ef4444',
+] as unknown as string;
+
+const segmentLineLayer: LayerProps = {
+  id: 'segment-line',
   type: 'line',
   paint: {
-    'line-color': '#ff3b30',
+    'line-color': timeColorExpr,
+    'line-width': 3,
+    'line-opacity': 0.85,
+  },
+  layout: { 'line-cap': 'round', 'line-join': 'round' },
+};
+
+const tripLineLayer: LayerProps = {
+  id: 'trip-line',
+  type: 'line',
+  paint: {
+    'line-color': timeColorExpr,
     'line-width': 3,
     'line-opacity': 0.85,
   },
@@ -71,24 +246,82 @@ const pointsLayer: LayerProps = {
   id: 'track-points',
   type: 'circle',
   paint: {
-    'circle-radius': 3,
-    'circle-color': '#ff3b30',
+    'circle-radius': 2.5,
+    'circle-color': timeColorExpr,
     'circle-stroke-color': '#ffffff',
-    'circle-stroke-width': 1,
+    'circle-stroke-width': 0.5,
+    'circle-opacity': 0.9,
   },
 };
 
-type Props = { locations: LocationRow[] };
+const heatmapLayer: LayerProps = {
+  id: 'heatmap',
+  type: 'heatmap',
+  paint: {
+    'heatmap-weight': 1,
+    'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 15, 3],
+    'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 0, 2, 9, 12, 15, 25],
+    'heatmap-opacity': 0.75,
+    'heatmap-color': [
+      'interpolate',
+      ['linear'],
+      ['heatmap-density'],
+      0,
+      'rgba(0,0,255,0)',
+      0.2,
+      '#2563eb',
+      0.5,
+      '#10b981',
+      0.8,
+      '#f59e0b',
+      1.0,
+      '#ef4444',
+    ],
+  },
+};
 
-export default function Map({ locations }: Props) {
+const stopsLayer: LayerProps = {
+  id: 'stops',
+  type: 'circle',
+  paint: {
+    'circle-radius': [
+      'interpolate',
+      ['linear'],
+      ['get', 'duration_s'],
+      600,
+      6,
+      3600,
+      10,
+      14400,
+      16,
+      86400,
+      24,
+    ],
+    'circle-color': '#fbbf24',
+    'circle-stroke-color': '#111827',
+    'circle-stroke-width': 1.5,
+    'circle-opacity': 0.9,
+  },
+};
+
+// ---------- component ----------
+
+type Props = { locations: LocationRow[]; viewMode: ViewMode };
+
+export default function Map({ locations, viewMode }: Props) {
   const { data: tileFiles } = useTileFiles();
   const mapStyle = useMemo(() => buildMapStyle(tileFiles ?? []), [tileFiles]);
 
-  const { lineFeature, pointsFC, bounds } = useMemo(() => {
+  const data = useMemo(() => {
     if (locations.length === 0) {
-      return { lineFeature: null, pointsFC: emptyFC(), bounds: null };
+      return {
+        segmentsFC: emptyFC(),
+        pointsFC: emptyFC(),
+        stopsFC: emptyFC(),
+        tripsFC: emptyFC(),
+        bounds: null as null | [[number, number], [number, number]],
+      };
     }
-    const coords = locations.map((r) => [r.lon, r.lat] as [number, number]);
     let minLat = locations[0].lat;
     let maxLat = locations[0].lat;
     let minLon = locations[0].lon;
@@ -99,22 +332,52 @@ export default function Map({ locations }: Props) {
       if (r.lon < minLon) minLon = r.lon;
       if (r.lon > maxLon) maxLon = r.lon;
     }
-    const lineFC = {
-      type: 'Feature' as const,
-      geometry: { type: 'LineString' as const, coordinates: coords },
-      properties: {},
-    };
-    const pointsFC = {
-      type: 'FeatureCollection' as const,
-      features: locations.map((r) => ({
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: [r.lon, r.lat] },
-        properties: { tst: r.tst, user: r.user, device: r.device },
-      })),
-    };
+    const tFrom = locations[0].tst;
+    const tTo = locations[locations.length - 1].tst;
+    const span = Math.max(tTo - tFrom, 1);
+
+    const segments = segmentTrack(locations);
+    const stops = detectStops(locations);
+    const trips = buildTrips(locations, stops);
+
     return {
-      lineFeature: lineFC,
-      pointsFC,
+      segmentsFC: {
+        type: 'FeatureCollection' as const,
+        features: segments.map((s) => ({
+          type: 'Feature' as const,
+          geometry: { type: 'LineString' as const, coordinates: s.coords },
+          properties: { t: (s.startTst - tFrom) / span, start: s.startTst, end: s.endTst },
+        })),
+      },
+      pointsFC: {
+        type: 'FeatureCollection' as const,
+        features: locations.map((r) => ({
+          type: 'Feature' as const,
+          geometry: { type: 'Point' as const, coordinates: [r.lon, r.lat] },
+          properties: { tst: r.tst, t: (r.tst - tFrom) / span },
+        })),
+      },
+      stopsFC: {
+        type: 'FeatureCollection' as const,
+        features: stops.map((s) => ({
+          type: 'Feature' as const,
+          geometry: { type: 'Point' as const, coordinates: [s.lon, s.lat] },
+          properties: {
+            duration_s: s.endTst - s.startTst,
+            start: s.startTst,
+            end: s.endTst,
+            count: s.count,
+          },
+        })),
+      },
+      tripsFC: {
+        type: 'FeatureCollection' as const,
+        features: trips.map((t) => ({
+          type: 'Feature' as const,
+          geometry: { type: 'LineString' as const, coordinates: t.coords },
+          properties: { t: (t.startTst - tFrom) / span },
+        })),
+      },
       bounds: [
         [minLon, minLat],
         [maxLon, maxLat],
@@ -122,24 +385,41 @@ export default function Map({ locations }: Props) {
     };
   }, [locations]);
 
-  const initialViewState = bounds
+  const initialViewState = data.bounds
     ? {
-        longitude: (bounds[0][0] + bounds[1][0]) / 2,
-        latitude: (bounds[0][1] + bounds[1][1]) / 2,
+        longitude: (data.bounds[0][0] + data.bounds[1][0]) / 2,
+        latitude: (data.bounds[0][1] + data.bounds[1][1]) / 2,
         zoom: 11,
       }
     : { longitude: 0, latitude: 20, zoom: 2 };
 
   return (
     <MapGL initialViewState={initialViewState} mapStyle={mapStyle} reuseMaps>
-      {lineFeature && (
-        <Source id="track" type="geojson" data={lineFeature}>
-          <Layer {...trackLineLayer} />
+      {viewMode === 'path' && (
+        <>
+          <Source id="segments" type="geojson" data={data.segmentsFC}>
+            <Layer {...segmentLineLayer} />
+          </Source>
+          <Source id="points" type="geojson" data={data.pointsFC}>
+            <Layer {...pointsLayer} />
+          </Source>
+        </>
+      )}
+      {viewMode === 'heatmap' && (
+        <Source id="heat" type="geojson" data={data.pointsFC}>
+          <Layer {...heatmapLayer} />
         </Source>
       )}
-      <Source id="points" type="geojson" data={pointsFC}>
-        <Layer {...pointsLayer} />
-      </Source>
+      {viewMode === 'stops' && (
+        <>
+          <Source id="trips" type="geojson" data={data.tripsFC}>
+            <Layer {...tripLineLayer} />
+          </Source>
+          <Source id="stops" type="geojson" data={data.stopsFC}>
+            <Layer {...stopsLayer} />
+          </Source>
+        </>
+      )}
     </MapGL>
   );
 }
