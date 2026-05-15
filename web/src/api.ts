@@ -64,3 +64,17 @@ export const useBbox = (q: BboxQuery, enabled = true) =>
     queryFn: () => get<LocationsResponse>(`/api/locations/bbox${qs(q)}`),
     enabled,
   });
+
+export const useTileFiles = () =>
+  useQuery({
+    queryKey: ['tiles'],
+    queryFn: async () => {
+      try {
+        const r = await get<{ files: string[] }>('/api/tiles');
+        return r.files ?? [];
+      } catch {
+        return ['map.pmtiles'];
+      }
+    },
+    staleTime: Infinity,
+  });

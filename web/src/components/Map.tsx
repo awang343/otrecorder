@@ -1,26 +1,46 @@
 import { useMemo } from 'react';
 import { Map as MapGL, Source, Layer, type LayerProps } from 'react-map-gl/maplibre';
 import { layers as protomapsLayers, namedFlavor } from '@protomaps/basemaps';
+import type {
+  LayerSpecification,
+  SourceSpecification,
+  StyleSpecification,
+} from 'maplibre-gl';
 import type { LocationRow } from '../types';
-
-const PMTILES_URL = '/tiles/map.pmtiles';
+import { useTileFiles } from '../api';
 
 const flavor = namedFlavor('light');
+const ATTRIBUTION =
+  '<a href="https://protomaps.com">Protomaps</a> &copy; <a href="https://openstreetmap.org">OpenStreetMap</a>';
 
-const mapStyle = {
-  version: 8 as const,
-  glyphs: 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
-  sprite: 'https://protomaps.github.io/basemaps-assets/sprites/v4/light',
-  sources: {
-    protomaps: {
-      type: 'vector' as const,
-      url: `pmtiles://${PMTILES_URL}`,
-      attribution:
-        '<a href="https://protomaps.com">Protomaps</a> &copy; <a href="https://openstreetmap.org">OpenStreetMap</a>',
-    },
-  },
-  layers: protomapsLayers('protomaps', flavor, { lang: 'en' }),
-};
+function sourceIdFor(file: string, index: number): string {
+  const cleaned = file.replace(/\.pmtiles$/i, '').replace(/[^a-zA-Z0-9_]/g, '_');
+  return cleaned ? `pm_${cleaned}` : `pm_${index}`;
+}
+
+function buildMapStyle(files: string[]): StyleSpecification {
+  const sources: Record<string, SourceSpecification> = {};
+  const layers: LayerSpecification[] = [];
+  files.forEach((file, i) => {
+    const src = sourceIdFor(file, i);
+    sources[src] = {
+      type: 'vector',
+      url: `pmtiles:///tiles/${file}`,
+      attribution: ATTRIBUTION,
+    };
+    const srcLayers = protomapsLayers(src, flavor, { lang: 'en' }) as LayerSpecification[];
+    for (const layer of srcLayers) {
+      layers.push({ ...layer, id: `${src}__${layer.id}` } as LayerSpecification);
+    }
+  });
+  return {
+    version: 8,
+    glyphs: 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
+    sprite: 'https://protomaps.github.io/basemaps-assets/sprites/v4/light',
+    sources,
+    layers,
+  };
+}
 
 const trackLineLayer: LayerProps = {
   id: 'track-line',
@@ -47,6 +67,9 @@ const pointsLayer: LayerProps = {
 type Props = { locations: LocationRow[] };
 
 export default function Map({ locations }: Props) {
+  const { data: tileFiles } = useTileFiles();
+  const mapStyle = useMemo(() => buildMapStyle(tileFiles ?? []), [tileFiles]);
+
   const { lineFeature, pointsFC, bounds } = useMemo(() => {
     if (locations.length === 0) {
       return { lineFeature: null, pointsFC: emptyFC(), bounds: null };

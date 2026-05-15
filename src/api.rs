@@ -42,14 +42,49 @@ pub fn router(
         .route("/api/track.gpx", get(track_gpx))
         .with_state(state);
 
+    let mut tile_files: Vec<String> = Vec::new();
     if let Some(path) = tiles_pmtiles {
-        if path.is_file() {
+        if path.is_dir() {
+            match list_pmtiles(&path) {
+                Ok(names) => {
+                    info!(
+                        path = %path.display(),
+                        count = names.len(),
+                        "serving pmtiles directory at /tiles/",
+                    );
+                    tile_files = names;
+                    router = router.nest_service("/tiles", ServeDir::new(path));
+                }
+                Err(e) => {
+                    warn!(path = %path.display(), error = %e, "failed to read tiles directory");
+                }
+            }
+        } else if path.is_file() {
             info!(path = %path.display(), "serving pmtiles at /tiles/map.pmtiles");
+            tile_files.push("map.pmtiles".to_string());
             router = router.route_service("/tiles/map.pmtiles", ServeFile::new(path));
         } else {
-            warn!(path = %path.display(), "tiles_pmtiles is set but file does not exist");
+            warn!(path = %path.display(), "tiles_pmtiles is set but path does not exist");
         }
     }
+
+    let tiles_body =
+        serde_json::to_string(&serde_json::json!({ "files": tile_files })).unwrap_or_else(|_| {
+            String::from("{\"files\":[]}")
+        });
+    router = router.route(
+        "/api/tiles",
+        get(move || {
+            let body = tiles_body.clone();
+            async move {
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    body,
+                )
+            }
+        }),
+    );
 
     if let Some(dir) = static_root {
         if dir.is_dir() {
@@ -371,6 +406,24 @@ async fn track_gpx(
 }
 
 // ---------- helpers ----------
+
+fn list_pmtiles(dir: &std::path::Path) -> std::io::Result<Vec<String>> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            if !p.is_file() {
+                return None;
+            }
+            if p.extension().and_then(|s| s.to_str()) != Some("pmtiles") {
+                return None;
+            }
+            p.file_name()?.to_str().map(|s| s.to_string())
+        })
+        .collect();
+    names.sort();
+    Ok(names)
+}
 
 fn push_xml_escaped(out: &mut String, s: &str) {
     for c in s.chars() {

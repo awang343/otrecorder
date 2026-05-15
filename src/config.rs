@@ -48,7 +48,10 @@ pub struct HttpConfig {
     pub bind: String,
     #[serde(default)]
     pub cors_any_origin: bool,
-    /// If set, serve this .pmtiles file at `GET /tiles/map.pmtiles` with HTTP range support.
+    /// If set, serve pmtiles at `/tiles/`. May point to either a single `.pmtiles`
+    /// file (served at `/tiles/map.pmtiles`) or a directory of `.pmtiles` files
+    /// (each served at `/tiles/<name>.pmtiles`). HTTP range requests are supported
+    /// in both modes. The list of available files is exposed at `GET /api/tiles`.
     #[serde(default)]
     pub tiles_pmtiles: Option<PathBuf>,
     /// If set, serve the built frontend (a Vite `dist/` directory) at `/`.
@@ -161,9 +164,12 @@ tls      = false
 enabled = true
 bind    = "127.0.0.1:8080"
 cors_any_origin = false
-# Optional: serve a self-hosted Protomaps basemap from this binary.
-# When set, `GET /tiles/map.pmtiles` streams the file with HTTP range support.
+# Optional: serve self-hosted Protomaps basemap(s) from this binary.
+# May point to a single `.pmtiles` file (served at `/tiles/map.pmtiles`) or a
+# directory of `.pmtiles` files (each served at `/tiles/<name>.pmtiles`).
+# The file list is published at `GET /api/tiles`. HTTP range requests are supported.
 # tiles_pmtiles = "~/.local/share/otrecorder/map.pmtiles"
+# tiles_pmtiles = "~/.local/share/otrecorder/tiles"
 # Optional: serve the built web UI (a Vite `dist/` directory) at `/`.
 # static_root = "~/projects/otrecorder/web/dist"
 "#;
