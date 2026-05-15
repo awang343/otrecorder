@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import Filters, { type FilterState } from './components/Filters';
+import Filters, { localDatetimeToIso, type FilterState } from './components/Filters';
 import Map from './components/Map';
 import { useLocations, useStats } from './api';
 
@@ -19,8 +19,8 @@ export default function App() {
     () => ({
       user: filters.user || undefined,
       device: filters.device || undefined,
-      from: filters.from || undefined,
-      to: filters.to || undefined,
+      from: localDatetimeToIso(filters.from),
+      to: localDatetimeToIso(filters.to),
       limit: filters.limit,
       order: 'asc' as const,
     }),

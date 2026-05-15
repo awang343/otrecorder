@@ -57,6 +57,33 @@ html, body, #root {
   color: inherit;
 }
 
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.preset {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.preset:hover {
+  border-color: rgba(127, 127, 127, 0.7);
+}
+
+.preset.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: white;
+}
+
 .map-wrap {
   position: relative;
   height: 100%;
