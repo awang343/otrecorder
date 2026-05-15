@@ -20,19 +20,33 @@ function sourceIdFor(file: string, index: number): string {
 
 function buildMapStyle(files: string[]): StyleSpecification {
   const sources: Record<string, SourceSpecification> = {};
-  const layers: LayerSpecification[] = [];
-  files.forEach((file, i) => {
+  const perSource = files.map((file, i) => {
     const src = sourceIdFor(file, i);
     sources[src] = {
       type: 'vector',
       url: `pmtiles:///tiles/${file}`,
       attribution: ATTRIBUTION,
     };
-    const srcLayers = protomapsLayers(src, flavor, { lang: 'en' }) as LayerSpecification[];
-    for (const layer of srcLayers) {
+    return {
+      src,
+      layers: protomapsLayers(src, flavor, { lang: 'en' }) as LayerSpecification[],
+    };
+  });
+
+  const layers: LayerSpecification[] = [];
+  const slotCount = perSource[0]?.layers.length ?? 0;
+  for (let i = 0; i < slotCount; i++) {
+    const template = perSource[0].layers[i] as LayerSpecification & { source?: string };
+    if (!template.source) {
+      layers.push({ ...template, id: `shared__${template.id}` } as LayerSpecification);
+      continue;
+    }
+    for (const { src, layers: sl } of perSource) {
+      const layer = sl[i] as LayerSpecification & { id: string };
       layers.push({ ...layer, id: `${src}__${layer.id}` } as LayerSpecification);
     }
-  });
+  }
+
   return {
     version: 8,
     glyphs: 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
