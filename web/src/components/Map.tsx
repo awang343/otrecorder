@@ -273,31 +273,43 @@ const pointsOnlyLayer: LayerProps = {
   },
 };
 
-const heatmapLayer: LayerProps = {
-  id: 'heatmap',
-  type: 'heatmap',
-  paint: {
-    'heatmap-weight': 1,
-    'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 15, 3],
-    'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 0, 2, 9, 12, 15, 25],
-    'heatmap-opacity': 0.75,
-    'heatmap-color': [
-      'interpolate',
-      ['linear'],
-      ['heatmap-density'],
-      0,
-      'rgba(0,0,255,0)',
-      0.2,
-      '#2563eb',
-      0.5,
-      '#10b981',
-      0.8,
-      '#f59e0b',
-      1.0,
-      '#ef4444',
-    ],
-  },
-};
+function makeHeatmapLayer(spread: number): LayerProps {
+  return {
+    id: 'heatmap',
+    type: 'heatmap',
+    paint: {
+      'heatmap-weight': 1,
+      'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 15, 3],
+      'heatmap-radius': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        0,
+        2 * spread,
+        9,
+        12 * spread,
+        15,
+        25 * spread,
+      ],
+      'heatmap-opacity': 0.75,
+      'heatmap-color': [
+        'interpolate',
+        ['linear'],
+        ['heatmap-density'],
+        0,
+        'rgba(0,0,255,0)',
+        0.2,
+        '#2563eb',
+        0.5,
+        '#10b981',
+        0.8,
+        '#f59e0b',
+        1.0,
+        '#ef4444',
+      ],
+    },
+  };
+}
 
 const stopsLayer: LayerProps = {
   id: 'stops',
@@ -351,11 +363,12 @@ type Hover = {
 
 // ---------- component ----------
 
-type Props = { locations: LocationRow[]; viewMode: ViewMode };
+type Props = { locations: LocationRow[]; viewMode: ViewMode; heatmapSpread?: number };
 
-export default function Map({ locations, viewMode }: Props) {
+export default function Map({ locations, viewMode, heatmapSpread = 1 }: Props) {
   const { data: tileFiles } = useTileFiles();
   const mapStyle = useMemo(() => buildMapStyle(tileFiles ?? []), [tileFiles]);
+  const heatmapLayer = useMemo(() => makeHeatmapLayer(heatmapSpread), [heatmapSpread]);
   const [hover, setHover] = useState<Hover | null>(null);
 
   const interactiveLayerIds = useMemo(() => {

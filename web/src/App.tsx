@@ -21,6 +21,7 @@ const VIEW_MODES: { value: ViewMode; label: string }[] = [
 export default function App() {
   const [filters, setFilters] = useState<FilterState>(DEFAULTS);
   const [viewMode, setViewMode] = useState<ViewMode>('path');
+  const [heatmapSpread, setHeatmapSpread] = useState(1);
   const stats = useStats();
 
   const query = useMemo(
@@ -57,6 +58,22 @@ export default function App() {
           ))}
         </div>
 
+        {viewMode === 'heatmap' && (
+          <>
+            <label>
+              Spread <span style={{ opacity: 0.5 }}>({heatmapSpread.toFixed(2)}×)</span>
+            </label>
+            <input
+              type="range"
+              min={0.1}
+              max={2.5}
+              step={0.05}
+              value={heatmapSpread}
+              onChange={(e) => setHeatmapSpread(Number(e.target.value))}
+            />
+          </>
+        )}
+
         <Filters value={filters} onChange={setFilters} />
         <div style={{ marginTop: 16, fontSize: 12, opacity: 0.7 }}>
           {stats.data && (
@@ -70,7 +87,7 @@ export default function App() {
         </div>
       </aside>
       <div className="map-wrap">
-        <Map locations={rows} viewMode={viewMode} />
+        <Map locations={rows} viewMode={viewMode} heatmapSpread={heatmapSpread} />
         <div className="status">
           {locations.isLoading
             ? 'loading…'
