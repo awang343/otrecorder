@@ -9,6 +9,7 @@ import {
 } from 'react-map-gl/maplibre';
 import { layers as protomapsLayers, namedFlavor } from '@protomaps/basemaps';
 import type {
+  ExpressionSpecification,
   LayerSpecification,
   SourceSpecification,
   StyleSpecification,
@@ -22,8 +23,6 @@ const flavor = namedFlavor('light');
 const ATTRIBUTION =
   '<a href="https://protomaps.com">Protomaps</a> &copy; <a href="https://openstreetmap.org">OpenStreetMap</a>';
 
-const GAP_TIME_S = 15 * 60;
-const GAP_DIST_M = 500;
 const STOP_RADIUS_M = 100;
 const STOP_MIN_DWELL_S = 10 * 60;
 
@@ -90,32 +89,14 @@ type Segment = {
 };
 
 function segmentTrack(locations: LocationRow[]): Segment[] {
-  const out: Segment[] = [];
-  let cur: LocationRow[] = [];
-  const flush = () => {
-    if (cur.length >= 2) {
-      out.push({
-        coords: cur.map((r) => [r.lon, r.lat] as [number, number]),
-        startTst: cur[0].tst,
-        endTst: cur[cur.length - 1].tst,
-      });
-    }
-    cur = [];
-  };
-  for (const p of locations) {
-    if (cur.length > 0) {
-      const prev = cur[cur.length - 1];
-      if (
-        p.tst - prev.tst > GAP_TIME_S ||
-        haversineMeters(prev.lat, prev.lon, p.lat, p.lon) > GAP_DIST_M
-      ) {
-        flush();
-      }
-    }
-    cur.push(p);
-  }
-  flush();
-  return out;
+  if (locations.length < 2) return [];
+  return [
+    {
+      coords: locations.map((r) => [r.lon, r.lat] as [number, number]),
+      startTst: locations[0].tst,
+      endTst: locations[locations.length - 1].tst,
+    },
+  ];
 }
 
 type Stop = {
@@ -197,17 +178,7 @@ function buildTrips(locations: LocationRow[], stops: Stop[]): Segment[] {
       flush();
       continue;
     }
-    const p = locations[i];
-    if (cur.length > 0) {
-      const prev = cur[cur.length - 1];
-      if (
-        p.tst - prev.tst > GAP_TIME_S ||
-        haversineMeters(prev.lat, prev.lon, p.lat, p.lon) > GAP_DIST_M
-      ) {
-        flush();
-      }
-    }
-    cur.push(p);
+    cur.push(locations[i]);
   }
   flush();
   return trips;
@@ -227,11 +198,23 @@ const timeColorExpr = [
   '#ef4444',
 ] as unknown as string;
 
+const lineGradientExpr = [
+  'interpolate',
+  ['linear'],
+  ['line-progress'],
+  0.0,
+  '#2563eb',
+  0.5,
+  '#a855f7',
+  1.0,
+  '#ef4444',
+] as unknown as ExpressionSpecification;
+
 const segmentLineLayer: LayerProps = {
   id: 'segment-line',
   type: 'line',
   paint: {
-    'line-color': timeColorExpr,
+    'line-gradient': lineGradientExpr,
     'line-width': 3,
     'line-opacity': 0.85,
   },
@@ -242,7 +225,7 @@ const tripLineLayer: LayerProps = {
   id: 'trip-line',
   type: 'line',
   paint: {
-    'line-color': timeColorExpr,
+    'line-gradient': lineGradientExpr,
     'line-width': 3,
     'line-opacity': 0.85,
   },
@@ -493,7 +476,7 @@ export default function Map({ locations, viewMode, heatmapSpread = 1 }: Props) {
     >
       {viewMode === 'path' && (
         <>
-          <Source id="segments" type="geojson" data={data.segmentsFC}>
+          <Source id="segments" type="geojson" data={data.segmentsFC} lineMetrics>
             <Layer {...segmentLineLayer} />
           </Source>
           <Source id="points" type="geojson" data={data.pointsFC}>
@@ -513,7 +496,7 @@ export default function Map({ locations, viewMode, heatmapSpread = 1 }: Props) {
       )}
       {viewMode === 'stops' && (
         <>
-          <Source id="trips" type="geojson" data={data.tripsFC}>
+          <Source id="trips" type="geojson" data={data.tripsFC} lineMetrics>
             <Layer {...tripLineLayer} />
           </Source>
           <Source id="stops" type="geojson" data={data.stopsFC}>

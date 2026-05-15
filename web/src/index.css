@@ -88,10 +88,19 @@ html, body, #root {
   padding: 6px 10px;
   font-size: 12px;
   border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
 }
 
 .hover-popup .maplibregl-popup-tip {
   display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .hover-popup .maplibregl-popup-content {
+    background: #1f2937;
+    color: #f3f4f6;
+  }
 }
 
 .popup-title {
