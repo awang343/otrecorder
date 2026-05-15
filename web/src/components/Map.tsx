@@ -1,5 +1,12 @@
-import { useMemo } from 'react';
-import { Map as MapGL, Source, Layer, type LayerProps } from 'react-map-gl/maplibre';
+import { useMemo, useState } from 'react';
+import {
+  Map as MapGL,
+  Source,
+  Layer,
+  Popup,
+  type LayerProps,
+  type MapLayerMouseEvent,
+} from 'react-map-gl/maplibre';
 import { layers as protomapsLayers, namedFlavor } from '@protomaps/basemaps';
 import type {
   LayerSpecification,
@@ -9,7 +16,7 @@ import type {
 import type { LocationRow } from '../types';
 import { useTileFiles } from '../api';
 
-export type ViewMode = 'path' | 'heatmap' | 'stops';
+export type ViewMode = 'path' | 'points' | 'heatmap' | 'stops';
 
 const flavor = namedFlavor('light');
 const ATTRIBUTION =
@@ -254,6 +261,18 @@ const pointsLayer: LayerProps = {
   },
 };
 
+const pointsOnlyLayer: LayerProps = {
+  id: 'points-only',
+  type: 'circle',
+  paint: {
+    'circle-radius': ['interpolate', ['linear'], ['zoom'], 0, 2.5, 10, 4.5, 16, 7],
+    'circle-color': timeColorExpr,
+    'circle-stroke-color': '#ffffff',
+    'circle-stroke-width': 1,
+    'circle-opacity': 0.9,
+  },
+};
+
 const heatmapLayer: LayerProps = {
   id: 'heatmap',
   type: 'heatmap',
@@ -304,6 +323,32 @@ const stopsLayer: LayerProps = {
   },
 };
 
+// ---------- formatting ----------
+
+function fmtTst(tst: number): string {
+  return new Date(tst * 1000).toLocaleString();
+}
+
+function fmtDuration(s: number): string {
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 86400) {
+    const h = Math.floor(s / 3600);
+    const m = Math.round((s % 3600) / 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+  const d = Math.floor(s / 86400);
+  const h = Math.round((s % 86400) / 3600);
+  return h > 0 ? `${d}d ${h}h` : `${d}d`;
+}
+
+type Hover = {
+  lng: number;
+  lat: number;
+  layerId: string;
+  props: Record<string, unknown>;
+};
+
 // ---------- component ----------
 
 type Props = { locations: LocationRow[]; viewMode: ViewMode };
@@ -311,6 +356,30 @@ type Props = { locations: LocationRow[]; viewMode: ViewMode };
 export default function Map({ locations, viewMode }: Props) {
   const { data: tileFiles } = useTileFiles();
   const mapStyle = useMemo(() => buildMapStyle(tileFiles ?? []), [tileFiles]);
+  const [hover, setHover] = useState<Hover | null>(null);
+
+  const interactiveLayerIds = useMemo(() => {
+    if (viewMode === 'path') return ['track-points'];
+    if (viewMode === 'points') return ['points-only'];
+    if (viewMode === 'stops') return ['stops'];
+    return [];
+  }, [viewMode]);
+
+  const onMouseMove = (e: MapLayerMouseEvent) => {
+    const f = e.features?.[0];
+    if (f && f.geometry.type === 'Point') {
+      const [lng, lat] = f.geometry.coordinates as [number, number];
+      setHover({
+        lng,
+        lat,
+        layerId: f.layer?.id ?? '',
+        props: (f.properties ?? {}) as Record<string, unknown>,
+      });
+    } else if (hover) {
+      setHover(null);
+    }
+  };
+  const onMouseLeave = () => setHover(null);
 
   const data = useMemo(() => {
     if (locations.length === 0) {
@@ -354,7 +423,13 @@ export default function Map({ locations, viewMode }: Props) {
         features: locations.map((r) => ({
           type: 'Feature' as const,
           geometry: { type: 'Point' as const, coordinates: [r.lon, r.lat] },
-          properties: { tst: r.tst, t: (r.tst - tFrom) / span },
+          properties: {
+            tst: r.tst,
+            t: (r.tst - tFrom) / span,
+            acc: r.acc,
+            vel: r.vel,
+            alt: r.alt,
+          },
         })),
       },
       stopsFC: {
@@ -394,7 +469,15 @@ export default function Map({ locations, viewMode }: Props) {
     : { longitude: 0, latitude: 20, zoom: 2 };
 
   return (
-    <MapGL initialViewState={initialViewState} mapStyle={mapStyle} reuseMaps>
+    <MapGL
+      initialViewState={initialViewState}
+      mapStyle={mapStyle}
+      reuseMaps
+      interactiveLayerIds={interactiveLayerIds}
+      onMouseMove={onMouseMove}
+      onMouseLeave={onMouseLeave}
+      cursor={hover ? 'pointer' : 'auto'}
+    >
       {viewMode === 'path' && (
         <>
           <Source id="segments" type="geojson" data={data.segmentsFC}>
@@ -404,6 +487,11 @@ export default function Map({ locations, viewMode }: Props) {
             <Layer {...pointsLayer} />
           </Source>
         </>
+      )}
+      {viewMode === 'points' && (
+        <Source id="points-src" type="geojson" data={data.pointsFC}>
+          <Layer {...pointsOnlyLayer} />
+        </Source>
       )}
       {viewMode === 'heatmap' && (
         <Source id="heat" type="geojson" data={data.pointsFC}>
@@ -420,7 +508,54 @@ export default function Map({ locations, viewMode }: Props) {
           </Source>
         </>
       )}
+      {hover && (
+        <Popup
+          longitude={hover.lng}
+          latitude={hover.lat}
+          closeButton={false}
+          closeOnClick={false}
+          anchor="bottom"
+          offset={12}
+          className="hover-popup"
+        >
+          <HoverContent hover={hover} />
+        </Popup>
+      )}
     </MapGL>
+  );
+}
+
+function HoverContent({ hover }: { hover: Hover }) {
+  const p = hover.props;
+  if (hover.layerId === 'stops') {
+    const start = Number(p.start);
+    const end = Number(p.end);
+    const dur = Number(p.duration_s);
+    const count = Number(p.count);
+    return (
+      <div>
+        <div className="popup-title">Stop · {fmtDuration(dur)}</div>
+        <div className="popup-row">{fmtTst(start)}</div>
+        <div className="popup-row">→ {fmtTst(end)}</div>
+        <div className="popup-row dim">{count} points</div>
+      </div>
+    );
+  }
+  const tst = Number(p.tst);
+  const acc = p.acc == null ? null : Number(p.acc);
+  const vel = p.vel == null ? null : Number(p.vel);
+  const alt = p.alt == null ? null : Number(p.alt);
+  return (
+    <div>
+      <div className="popup-title">{fmtTst(tst)}</div>
+      {(acc !== null || vel !== null || alt !== null) && (
+        <div className="popup-row dim">
+          {acc !== null && <>±{Math.round(acc)} m</>}
+          {vel !== null && <> · {Math.round(vel)} km/h</>}
+          {alt !== null && <> · {Math.round(alt)} m alt</>}
+        </div>
+      )}
+    </div>
   );
 }
 

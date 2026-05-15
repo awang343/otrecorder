@@ -84,6 +84,28 @@ html, body, #root {
   color: white;
 }
 
+.hover-popup .maplibregl-popup-content {
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.hover-popup .maplibregl-popup-tip {
+  display: none;
+}
+
+.popup-title {
+  font-weight: 600;
+}
+
+.popup-row {
+  margin-top: 2px;
+}
+
+.popup-row.dim {
+  opacity: 0.7;
+}
+
 .map-wrap {
   position: relative;
   height: 100%;

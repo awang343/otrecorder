@@ -13,6 +13,7 @@ const DEFAULTS: FilterState = {
 
 const VIEW_MODES: { value: ViewMode; label: string }[] = [
   { value: 'path', label: 'Path' },
+  { value: 'points', label: 'Points' },
   { value: 'heatmap', label: 'Heatmap' },
   { value: 'stops', label: 'Stops & trips' },
 ];
